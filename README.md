@@ -1,5 +1,13 @@
 # aarnn-nsys — Ultra-low-latency MPMC message bus
 
+## Sponsor NeuralMimicry
+
+This crate is a production-grade, zero-allocation publish/subscribe message bus designed for ultra-low-latency neuromorphic and real-time systems work, with support for bare-metal `no_std` environments. NeuralMimicry is an independent open-source initiative and we rely on community support to sustain this work.
+
+**[☕ Support us on Crowdfunder](https://www.crowdfunder.co.uk/p/qr/aWggxwPW?utm_campaign=sharemodal&utm_medium=referral&utm_source=shortlink)**
+
+---
+
 aarnn-nsys is a tiny, production-grade message bus designed for single-host ultra-low latency pub/sub.
 It delivers multi-producer, multi-subscriber fan-out using a lock-free ring over a shared memory region.
 
@@ -254,3 +262,110 @@ To minimize latency variance on Linux: consider `mlockall`, `MADV_HUGEPAGE`, pre
 - Fixed per-slot payload size in this version; choose `slab_bytes` accordingly.
 - No dynamic subscriber removal/reuse.
 - No zero-copy receive API (planned).
+
+
+
+## usb-sim bridge notes (PTY endpoints)
+The `usbsim_bridge` binary can attach to a QEMU PTY (`-serial pty`) or a QEMU `pipe:` chardev and translate framed usb-sim traffic into a local `aarnn-nsys` bus.
+
+Quick start:
+```
+cargo run --bin usbsim_bridge -- \
+  --name /bm2lnx --desc 16384 --slab $((64<<20)) \
+  --endpoint pty:/dev/pts/N --max-frame 4096 --ttl 8 --self-test
+```
+
+Tips and requirements:
+- Frame size must match the bare-metal build. If BM uses `usbsim_frame_2048`, run the bridge with `--max-frame 2048`.
+- On PTY endpoints we set raw mode and non-blocking I/O to avoid stalls and CR/LF transformations.
+- EOF/pipe closure is handled gracefully: the bridge exits cleanly when the peer closes, instead of panicking.
+- In `--self-test` mode, the bridge periodically re-sends a small probe until it sees an ACK, which helps absorb early attach timing.
+- When used with the provided scripts, the Linux side prints `[MBUS-LNX] PASS` on success, or the BM side prints `[MBUS-BM] PASS`.
+
+Troubleshooting:
+- If you get `slot_bytes < max_frame`, increase `--slab` or reduce `--max-frame` (slot_bytes = slab/desc).
+- If the script times out on the first run, try re-running once; PTY attach timing can vary across hosts.
+- The scripts stop QEMU before stopping `socat` to avoid a benign warning on PTY teardown (I/O error while restoring term settings). This warning is filtered from summaries and does not indicate a failure.
+
+
+
+## L2 bridge quickstart (Linux↔Linux over raw Ethernet)
+The `l2bridge` binary forwards between a local `aarnn-nsys` bus and an L2 (Ethernet) link using AF_PACKET raw sockets. It supports simple fragmentation and a minimal header over a custom EtherType (default `0xCAFE`).
+
+Quick start using the helper script (creates a veth pair and starts two bridge processes):
+```
+sudo ./scripts/l2_linux2linux.sh
+```
+Expected: `[MBUS-L2-LNX] PASS` within the timeout, and the script tears down all processes and the veth pair.
+
+Manual run (one side):
+```
+cargo run -p aarnn-nsys --bin l2bridge -- \
+  --iface vethA \
+  --name /l2demoA --desc 16384 --slab $((64<<20)) \
+  --dst-mac 02:00:00:00:00:02 --ethertype 0xCAFE \
+  --max-frame 4096 --ttl 8 --self-test
+```
+Notes:
+- Requires CAP_NET_RAW (root) to open AF_PACKET sockets; run with `sudo`.
+- `slot_bytes` must be `slab/desc` and must be >= `--max-frame`.
+- EtherType must match on both sides; default `0xCAFE` is fine for local tests.
+- MAC handling:
+  - When the helper script auto-creates a veth pair, it programs deterministic locally administered MACs on `vethA` and `vethB` and uses those as the peers’ `--src-mac`/`--dst-mac` values so unicast frames are accepted.
+  - When using existing interfaces via `IFACE_A`/`IFACE_B`, the script does not change their MACs; instead it enables promiscuous mode on both to ensure unicast frames with the peer MAC are received.
+- The script starts children in new sessions and tears down process groups on exit, preventing orphans.
+- On PASS, one side prints `[MBUS-L2-LNX] PASS` after receiving an ACK (channel 1) from the peer.
+
+Troubleshooting:
+- If you see `slot_bytes < max_frame`, reduce `--max-frame` or increase `--slab`/decrease `--desc`.
+- If the script times out the first time, re-run once — interface bring-up timing can vary across hosts.
+- To use existing interfaces instead of a veth pair, provide `IFACE_A` and `IFACE_B` in the environment and set explicit `--src-mac`/`--dst-mac` values.
+
+
+
+### L2 trace mode and troubleshooting
+When running the Linux↔Linux L2 bridge you can enable a lightweight trace to aid debugging:
+
+```
+cargo run -p aarnn-nsys --bin l2bridge -- \
+  --iface vethA --name /l2demoA --desc 16384 --slab $((64<<20)) \
+  --dst-mac 02:00:00:00:00:02 --ethertype 0xCAFE \
+  --max-frame 4096 --ttl 8 --self-test --trace
+```
+
+What you’ll see (rate-limited to ~1 line/sec):
+- wrong_ethertype — frames received on the interface but with a different EtherType; usually normal background traffic.
+- short_frame — frames that were too short for the header or claimed payload length would overflow the capture buffer.
+- crc_fail — frames whose header+payload CRC did not match. On veth this should be 0; if not, another process may be injecting noise.
+- reasm_reset — reassembly state was reset (overflow or wrap). Should be 0 in the demo; rising counts indicate fragment loss.
+
+Tips:
+- For the helper script, set TRACE=1: `sudo TRACE=1 ./scripts/l2_linux2linux.sh`.
+- Ensure `slot_bytes = slab/desc` is >= `--max-frame`.
+- With the helper script’s auto veth, we program locally administered MACs and also enable promiscuous mode on both ends to make delivery deterministic. External interfaces use promisc without changing their MACs.
+
+
+### Updates in v0.1.7 (L2 bridge)
+- Self-test now sends an immediate on-wire probe over L2 (in addition to publishing to the local bus) to guarantee initial traffic.
+- Zero-length ACKs are padded to the Ethernet minimum payload so frames are never dropped for being too short.
+- Trace mode (`--trace`) now includes transmit counters and first-event hints:
+  - `tx_frag`, `tx_bytes`, and one-time messages `first TX` / `first RX` to confirm link activity.
+
+Example with trace (one side):
+```
+cargo run -p aarnn-nsys --bin l2bridge -- \
+  --iface vethA --name /l2demoA --desc 16384 --slab $((64<<20)) \
+  --dst-mac 02:00:00:00:00:02 --ethertype 0xCAFE \
+  --max-frame 4096 --ttl 8 --self-test --trace
+```
+You should see periodic lines like:
+```
+[l2bridge/trace] wrong_ethertype=0 short_frame=0 crc_fail=0 reasm_reset=0 tx_frag=3 tx_bytes=540
+[l2bridge/trace] first TX: 60 bytes
+[l2bridge/trace] first RX: 74 bytes
+```
+These confirm the link is active and frames are being exchanged.
+
+### Updates in v0.1.9 (L2 bridge)
+- The raw socket now joins AF_PACKET promiscuous membership (PACKET_ADD_MEMBERSHIP with PACKET_MR_PROMISC) so unicast frames destined for the configured peer MAC are reliably received on both veth and external NICs.
+- In `--self-test` mode the bridge periodically re-sends a small on-wire probe until the first ACK is seen (trace logs are rate-limited).
