@@ -34,54 +34,58 @@ fn main() {
         slot
     );
 
-    // Spawn producers in the same process
-    let mut handles = Vec::with_capacity(producers);
-    for p in 0..producers {
-        let prod = bus.producer();
-        let mut payload = vec![0u8; msg_size];
-        payload[0] = (p as u8) + 1; // ID marker
-        handles.push(std::thread::spawn(move || {
-            let start = Instant::now();
-            let mut sent = 0u64;
-            while start.elapsed() < Duration::from_secs(1) {
-                match prod.try_publish(&payload) {
-                    Ok(true) => sent += 1,
-                    Ok(false) => {
-                        prod.publish(&payload).unwrap();
-                        sent += 1;
-                    }
-                    Err(e) => {
-                        eprintln!("publish error: {e}");
-                        break;
+    // Producers borrow `bus`, so run them in a thread scope that ends before it is dropped.
+    let (total_sent, counts) = std::thread::scope(|scope| {
+        // Spawn producers in the same process
+        let mut handles = Vec::with_capacity(producers);
+        for p in 0..producers {
+            let prod = bus.producer();
+            let mut payload = vec![0u8; msg_size];
+            payload[0] = (p as u8) + 1; // ID marker
+            handles.push(scope.spawn(move || {
+                let start = Instant::now();
+                let mut sent = 0u64;
+                while start.elapsed() < Duration::from_secs(1) {
+                    match prod.try_publish(&payload) {
+                        Ok(true) => sent += 1,
+                        Ok(false) => {
+                            prod.publish(&payload).unwrap();
+                            sent += 1;
+                        }
+                        Err(e) => {
+                            eprintln!("publish error: {e}");
+                            break;
+                        }
                     }
                 }
-            }
-            sent
-        }));
-    }
+                sent
+            }));
+        }
 
-    let sub = bus.subscribe().expect("subscribe");
-    let mut buf = vec![0u8; slot];
-    let start = Instant::now();
-    let mut counts = vec![0u64; producers + 1];
-    while start.elapsed() < Duration::from_secs(2) {
-        match sub.try_recv(&mut buf) {
-            Ok(Some(n)) => {
-                assert!(n > 0);
-                counts[buf[0] as usize] += 1;
-            }
-            Ok(None) => std::thread::yield_now(),
-            Err(e) => {
-                eprintln!("recv error: {e}");
-                break;
+        let sub = bus.subscribe().expect("subscribe");
+        let mut buf = vec![0u8; slot];
+        let start = Instant::now();
+        let mut counts = vec![0u64; producers + 1];
+        while start.elapsed() < Duration::from_secs(2) {
+            match sub.try_recv(&mut buf) {
+                Ok(Some(n)) => {
+                    assert!(n > 0);
+                    counts[buf[0] as usize] += 1;
+                }
+                Ok(None) => std::thread::yield_now(),
+                Err(e) => {
+                    eprintln!("recv error: {e}");
+                    break;
+                }
             }
         }
-    }
 
-    let mut total_sent = 0u64;
-    for h in handles {
-        total_sent += h.join().unwrap();
-    }
+        let mut total_sent = 0u64;
+        for h in handles {
+            total_sent += h.join().unwrap();
+        }
+        (total_sent, counts)
+    });
     let total_recv: u64 = counts.iter().sum();
     println!(
         "bare_in_memory summary: total_sent={} total_recv={} slot_bytes={} desc_capacity={}",
