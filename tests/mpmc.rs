@@ -5,7 +5,12 @@ use std::time::{Duration, Instant};
 use aarnn_nsys::bus::{relay_once, BusHandle};
 
 fn unique_name(tag: &str) -> String {
-    format!("/aarnn_nsys_{}_{}_{}", tag, std::process::id(), Instant::now().elapsed().as_nanos())
+    format!(
+        "/aarnn_nsys_{}_{}_{}",
+        tag,
+        std::process::id(),
+        Instant::now().elapsed().as_nanos()
+    )
 }
 
 #[test]
@@ -25,14 +30,19 @@ fn single_producer_single_subscriber() {
     let payload_p = payload.clone();
     let prod_t = thread::spawn(move || {
         let prod = bus_p.producer();
-        for _ in 0..total { prod.publish(&payload_p).unwrap(); }
+        for _ in 0..total {
+            prod.publish(&payload_p).unwrap();
+        }
     });
 
     let mut got = 0u32;
     let start = Instant::now();
     while got < total && start.elapsed() < Duration::from_secs(5) {
         match sub.try_recv(&mut buf) {
-            Ok(Some(n)) => { assert_eq!(n, 128); got += 1; }
+            Ok(Some(n)) => {
+                assert_eq!(n, 128);
+                got += 1;
+            }
             Ok(None) => std::thread::yield_now(),
             Err(e) => panic!("recv error: {e}"),
         }
@@ -86,7 +96,11 @@ fn multi_producers_single_subscriber_counts() {
         match sub.try_recv(&mut buf) {
             Ok(Some(n)) => {
                 assert_eq!(n, msg_size);
-                match buf[0] { 0xA1 => got_a += 1, 0xB2 => got_b += 1, _ => {} }
+                match buf[0] {
+                    0xA1 => got_a += 1,
+                    0xB2 => got_b += 1,
+                    _ => {}
+                }
             }
             Ok(None) => std::thread::yield_now(),
             Err(e) => panic!("recv error: {e}"),
@@ -115,7 +129,8 @@ fn try_publish_backpressure() {
 
     // Fill ring without consuming
     let mut published = 0;
-    for _ in 0..(desc * 2) { // attempt more than capacity
+    for _ in 0..(desc * 2) {
+        // attempt more than capacity
         match prod.try_publish(&payload) {
             Ok(true) => published += 1,
             Ok(false) => break,
@@ -128,7 +143,11 @@ fn try_publish_backpressure() {
     let mut got = 0usize;
     let start = Instant::now();
     while got < published && start.elapsed() < Duration::from_secs(1) {
-        if let Ok(Some(_)) = sub.try_recv(&mut buf) { got += 1; } else { std::thread::yield_now(); }
+        if let Ok(Some(_)) = sub.try_recv(&mut buf) {
+            got += 1;
+        } else {
+            std::thread::yield_now();
+        }
     }
     assert_eq!(got, published);
     assert!(prod.try_publish(&payload).unwrap());
@@ -150,7 +169,9 @@ fn relay_between_buses() {
 
     // Producer on src
     let payload = vec![0x5Au8; 128];
-    for _ in 0..1000 { prod_src.publish(&payload).unwrap(); }
+    for _ in 0..1000 {
+        prod_src.publish(&payload).unwrap();
+    }
 
     // Relay loop for a short time
     let mut scratch = vec![0u8; src.slot_bytes()];
@@ -169,7 +190,12 @@ fn relay_between_buses() {
     let mut got = 0usize;
     let start = Instant::now();
     while got < fwd && start.elapsed() < Duration::from_secs(2) {
-        if let Ok(Some(n)) = sub_dst.try_recv(&mut buf) { assert_eq!(n, 128); got += 1; } else { std::thread::yield_now(); }
+        if let Ok(Some(n)) = sub_dst.try_recv(&mut buf) {
+            assert_eq!(n, 128);
+            got += 1;
+        } else {
+            std::thread::yield_now();
+        }
     }
     assert_eq!(got, fwd);
 }

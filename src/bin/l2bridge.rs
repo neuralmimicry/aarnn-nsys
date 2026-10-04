@@ -47,7 +47,9 @@ const FLAG_LAST: u8 = 1 << 1;
 
 fn parse_mac(s: &str) -> Option<[u8; 6]> {
     let parts: Vec<_> = s.split(':').collect();
-    if parts.len() != 6 { return None; }
+    if parts.len() != 6 {
+        return None;
+    }
     let mut mac = [0u8; 6];
     for i in 0..6 {
         mac[i] = u8::from_str_radix(parts[i], 16).ok()?;
@@ -56,15 +58,29 @@ fn parse_mac(s: &str) -> Option<[u8; 6]> {
 }
 
 fn mac_to_string(mac: &[u8; 6]) -> String {
-    format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5])
+    format!(
+        "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+    )
 }
 
 fn crc16_ccitt(mut crc: u16, data: &[u8]) -> u16 {
-    for &b in data { crc ^= (b as u16) << 8; for _ in 0..8 { if (crc & 0x8000) != 0 { crc = (crc << 1) ^ 0x1021; } else { crc <<= 1; } } }
+    for &b in data {
+        crc ^= (b as u16) << 8;
+        for _ in 0..8 {
+            if (crc & 0x8000) != 0 {
+                crc = (crc << 1) ^ 0x1021;
+            } else {
+                crc <<= 1;
+            }
+        }
+    }
     crc
 }
 
-fn htons(x: u16) -> u16 { x.to_be() }
+fn htons(x: u16) -> u16 {
+    x.to_be()
+}
 
 #[allow(non_camel_case_types)]
 mod ll {
@@ -109,19 +125,39 @@ struct RawSock {
 }
 
 fn get_ifindex(fd: RawFd, ifname: &str) -> std::io::Result<i32> {
-    let mut ifr = ll::ifreq { ifr_name: [0; 16], ifr_ifindex: 0 };
+    let mut ifr = ll::ifreq {
+        ifr_name: [0; 16],
+        ifr_ifindex: 0,
+    };
     let name = CString::new(ifname).unwrap();
     let bytes = name.as_bytes_with_nul();
-    if bytes.len() > 16 { return Err(std::io::Error::new(ErrorKind::InvalidInput, "ifname too long")); }
-    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), ifr.ifr_name.as_mut_ptr(), bytes.len()); }
+    if bytes.len() > 16 {
+        return Err(std::io::Error::new(
+            ErrorKind::InvalidInput,
+            "ifname too long",
+        ));
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), ifr.ifr_name.as_mut_ptr(), bytes.len());
+    }
     let rc = unsafe { ll::ioctl(fd, ll::SIOCGIFINDEX, &mut ifr as *mut _ as *mut _) };
-    if rc != 0 { return Err(std::io::Error::last_os_error()); }
+    if rc != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
     Ok(ifr.ifr_ifindex)
 }
 
 fn open_raw_socket(ifname: &str, ethertype: u16) -> std::io::Result<RawSock> {
-    let fd = unsafe { ll::socket(ll::AF_PACKET, ll::SOCK_RAW | ll::SOCK_NONBLOCK | ll::SOCK_CLOEXEC, htons(ethertype) as i32) };
-    if fd < 0 { return Err(std::io::Error::last_os_error()); }
+    let fd = unsafe {
+        ll::socket(
+            ll::AF_PACKET,
+            ll::SOCK_RAW | ll::SOCK_NONBLOCK | ll::SOCK_CLOEXEC,
+            htons(ethertype) as i32,
+        )
+    };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
     let fd = unsafe { OwnedFd::from_raw_fd(fd) };
     let ifindex = get_ifindex(fd.as_raw_fd(), ifname)?;
     // Bind
@@ -141,7 +177,9 @@ fn open_raw_socket(ifname: &str, ethertype: u16) -> std::io::Result<RawSock> {
             size_of::<ll::sockaddr_ll>() as libc::socklen_t,
         )
     };
-    if rc != 0 { return Err(std::io::Error::last_os_error()); }
+    if rc != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
 
     // Join promiscuous membership at the socket level so we receive unicast for the peer MAC reliably
     #[cfg(target_os = "linux")]
@@ -160,12 +198,18 @@ fn open_raw_socket(ifname: &str, ethertype: u16) -> std::io::Result<RawSock> {
     }
 
     // Try to read source MAC via recv of any packet? Simpler: require --src-mac or generate locally administered MAC.
-    Ok(RawSock { fd, src_mac: gen_local_mac() })
+    Ok(RawSock {
+        fd,
+        src_mac: gen_local_mac(),
+    })
 }
 
 fn gen_local_mac() -> [u8; 6] {
     // Locally administered unicast: set bit1 (LAA), clear multicast bit
-    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
     let mut mac = [0u8; 6];
     let x = t as u64;
     mac[0] = 0x02; // LAA
@@ -206,36 +250,76 @@ fn build_and_send_frag(
     }
 
     let mut flags = 0u8;
-    if !eff_payload.is_empty() { flags |= FLAG_FRAG; }
-    if last { flags |= FLAG_LAST; }
+    if !eff_payload.is_empty() {
+        flags |= FLAG_FRAG;
+    }
+    if last {
+        flags |= FLAG_LAST;
+    }
     let mut hdr = [0u8; 12];
-    hdr[0] = VER; hdr[1] = chan; hdr[2] = flags; hdr[3] = ttl;
-    hdr[4] = (msg_id & 0xFF) as u8; hdr[5] = (msg_id >> 8) as u8;
-    hdr[6] = (frag_idx & 0xFF) as u8; hdr[7] = (frag_idx >> 8) as u8;
-    hdr[8] = (eff_payload.len() as u16 & 0xFF) as u8; hdr[9] = ((eff_payload.len() as u16) >> 8) as u8;
+    hdr[0] = VER;
+    hdr[1] = chan;
+    hdr[2] = flags;
+    hdr[3] = ttl;
+    hdr[4] = (msg_id & 0xFF) as u8;
+    hdr[5] = (msg_id >> 8) as u8;
+    hdr[6] = (frag_idx & 0xFF) as u8;
+    hdr[7] = (frag_idx >> 8) as u8;
+    hdr[8] = (eff_payload.len() as u16 & 0xFF) as u8;
+    hdr[9] = ((eff_payload.len() as u16) >> 8) as u8;
     let mut crc = crc16_ccitt(0xFFFF, &hdr[..10]);
     crc = crc16_ccitt(crc, eff_payload);
-    hdr[10] = (crc & 0xFF) as u8; hdr[11] = (crc >> 8) as u8;
+    hdr[10] = (crc & 0xFF) as u8;
+    hdr[11] = (crc >> 8) as u8;
     frame.extend_from_slice(&hdr);
     frame.extend_from_slice(eff_payload);
 
-    let rc = unsafe { ll::send(sock.fd.as_raw_fd(), frame.as_ptr() as *const _, frame.len(), 0) };
-    if rc < 0 { return Err(std::io::Error::last_os_error()); }
+    let rc = unsafe {
+        ll::send(
+            sock.fd.as_raw_fd(),
+            frame.as_ptr() as *const _,
+            frame.len(),
+            0,
+        )
+    };
+    if rc < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
     Ok(frame.len())
 }
 
-fn poll_once(fd: RawFd, timeout_ms: i32, want_read: bool, want_write: bool) -> std::io::Result<(bool, bool)> {
-    let mut pfd = libc::pollfd { fd, events: 0, revents: 0 };
-    if want_read { pfd.events |= ll::POLLIN; }
-    if want_write { pfd.events |= ll::POLLOUT; }
+fn poll_once(
+    fd: RawFd,
+    timeout_ms: i32,
+    want_read: bool,
+    want_write: bool,
+) -> std::io::Result<(bool, bool)> {
+    let mut pfd = libc::pollfd {
+        fd,
+        events: 0,
+        revents: 0,
+    };
+    if want_read {
+        pfd.events |= ll::POLLIN;
+    }
+    if want_write {
+        pfd.events |= ll::POLLOUT;
+    }
     let rc = unsafe { ll::poll(&mut pfd as *mut _, 1, timeout_ms) };
-    if rc < 0 { return Err(std::io::Error::last_os_error()); }
-    Ok(((pfd.revents & ll::POLLIN) != 0, (pfd.revents & ll::POLLOUT) != 0))
+    if rc < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok((
+        (pfd.revents & ll::POLLIN) != 0,
+        (pfd.revents & ll::POLLOUT) != 0,
+    ))
 }
 
 fn recv_into(buf: &mut [u8], fd: RawFd) -> std::io::Result<usize> {
     let rc = unsafe { ll::recv(fd, buf.as_mut_ptr() as *mut _, buf.len(), 0) };
-    if rc < 0 { return Err(std::io::Error::last_os_error()); }
+    if rc < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
     Ok(rc as usize)
 }
 
@@ -245,7 +329,7 @@ fn main() {
     let mut iface = String::new();
     let mut name = String::from("/demo");
     let mut desc: usize = 16384;
-    let mut slab: usize = 64<<20;
+    let mut slab: usize = 64 << 20;
     let mut ethertype: u16 = 0xCAFE;
     let mut dst_mac_opt: Option<[u8; 6]> = None;
     let mut src_mac_opt: Option<[u8; 6]> = None;
@@ -262,7 +346,11 @@ fn main() {
             "--slab" => slab = args.next().unwrap().parse().unwrap(),
             "--ethertype" => {
                 let s = args.next().expect("--ethertype value");
-                ethertype = if s.starts_with("0x") || s.starts_with("0X") { u16::from_str_radix(&s[2..], 16).unwrap() } else { s.parse().unwrap() };
+                ethertype = if s.starts_with("0x") || s.starts_with("0X") {
+                    u16::from_str_radix(&s[2..], 16).unwrap()
+                } else {
+                    s.parse().unwrap()
+                };
             }
             "--dst-mac" => dst_mac_opt = parse_mac(&args.next().expect("--dst-mac value")),
             "--src-mac" => src_mac_opt = parse_mac(&args.next().expect("--src-mac value")),
@@ -270,28 +358,59 @@ fn main() {
             "--ttl" => ttl = args.next().unwrap().parse().unwrap(),
             "--self-test" => self_test = true,
             "--trace" => trace = true,
-            other => { eprintln!("Unknown arg: {}", other); std::process::exit(2); }
+            other => {
+                eprintln!("Unknown arg: {}", other);
+                std::process::exit(2);
+            }
         }
     }
 
-    if iface.is_empty() { eprintln!("--iface is required"); std::process::exit(2); }
+    if iface.is_empty() {
+        eprintln!("--iface is required");
+        std::process::exit(2);
+    }
     let slot_bytes = slab / desc;
-    if slot_bytes < max_frame { eprintln!("slot_bytes={} < max_frame={} — increase slab/desc", slot_bytes, max_frame); std::process::exit(2); }
+    if slot_bytes < max_frame {
+        eprintln!(
+            "slot_bytes={} < max_frame={} — increase slab/desc",
+            slot_bytes, max_frame
+        );
+        std::process::exit(2);
+    }
     // Build runtime config
-    let cfg = Cfg { ethertype, max_frame, ttl };
+    let cfg = Cfg {
+        ethertype,
+        max_frame,
+        ttl,
+    };
 
     // Bus
-    let bus = BusHandle::create(&name, desc, slab).or_else(|_| BusHandle::open(&name, desc, slab)).expect("bus");
+    let bus = BusHandle::create(&name, desc, slab)
+        .or_else(|_| BusHandle::open(&name, desc, slab))
+        .expect("bus");
     let sub = bus.subscribe().expect("subscribe");
     let prod = bus.producer();
 
     // Open raw socket
     let mut sock = open_raw_socket(&iface, ethertype).expect("open AF_PACKET");
-    if let Some(mac) = src_mac_opt { sock.src_mac = mac; }
-    let dst_mac = if let Some(m) = dst_mac_opt { m } else { [0xff; 6] }; // default broadcast if none provided
+    if let Some(mac) = src_mac_opt {
+        sock.src_mac = mac;
+    }
+    let dst_mac = if let Some(m) = dst_mac_opt {
+        m
+    } else {
+        [0xff; 6]
+    }; // default broadcast if none provided
 
-    eprintln!("[l2bridge] iface={} src={} dst={} ethertype=0x{:04x} slot_bytes={} max_frame={}",
-        iface, mac_to_string(&sock.src_mac), mac_to_string(&dst_mac), ethertype, slot_bytes, max_frame);
+    eprintln!(
+        "[l2bridge] iface={} src={} dst={} ethertype=0x{:04x} slot_bytes={} max_frame={}",
+        iface,
+        mac_to_string(&sock.src_mac),
+        mac_to_string(&dst_mac),
+        ethertype,
+        slot_bytes,
+        max_frame
+    );
     // Counters for diagnostics (used when --trace)
     let mut short_frame: u64 = 0;
     let mut wrong_ethertype: u64 = 0;
@@ -311,10 +430,15 @@ fn main() {
         let probe = b"MBUS-L2-PROBE";
         prod.publish(probe).expect("publish probe");
         // Immediate on-wire probe (chan=0, single fragment)
-        if let Ok(nbytes) = build_and_send_frag(&sock, &dst_mac, &cfg, 0, cfg.ttl, msg_id_ctr, 0, true, probe) {
+        if let Ok(nbytes) = build_and_send_frag(
+            &sock, &dst_mac, &cfg, 0, cfg.ttl, msg_id_ctr, 0, true, probe,
+        ) {
             tx_frag = tx_frag.saturating_add(1);
             tx_bytes = tx_bytes.saturating_add(nbytes as u64);
-            if trace && first_tx { eprintln!("[l2bridge/trace] first TX: {} bytes", nbytes); first_tx = false; }
+            if trace && first_tx {
+                eprintln!("[l2bridge/trace] first TX: {} bytes", nbytes);
+                first_tx = false;
+            }
         }
         msg_id_ctr = msg_id_ctr.wrapping_add(1);
     }
@@ -338,10 +462,15 @@ fn main() {
             probe_tick = probe_tick.wrapping_add(1);
             if (probe_tick & 0x0FFF) == 0 {
                 let probe = b"MBUS-L2-PROBE";
-                if let Ok(bytes) = build_and_send_frag(&sock, &dst_mac, &cfg, 0, cfg.ttl, msg_id_ctr, 0, true, probe) {
+                if let Ok(bytes) = build_and_send_frag(
+                    &sock, &dst_mac, &cfg, 0, cfg.ttl, msg_id_ctr, 0, true, probe,
+                ) {
                     tx_frag = tx_frag.saturating_add(1);
                     tx_bytes = tx_bytes.saturating_add(bytes as u64);
-                    if trace && first_tx { eprintln!("[l2bridge/trace] first TX: {} bytes", bytes); first_tx = false; }
+                    if trace && first_tx {
+                        eprintln!("[l2bridge/trace] first TX: {} bytes", bytes);
+                        first_tx = false;
+                    }
                 }
                 msg_id_ctr = msg_id_ctr.wrapping_add(1);
             }
@@ -351,17 +480,23 @@ fn main() {
         let mut out_buf = vec![0u8; slot_bytes];
         if let Ok(Some(n)) = sub.try_recv(&mut out_buf) {
             let mut sent = 0usize;
-            let msg_id = msg_id_ctr; msg_id_ctr = msg_id_ctr.wrapping_add(1);
+            let msg_id = msg_id_ctr;
+            msg_id_ctr = msg_id_ctr.wrapping_add(1);
             let mut frag_idx: u16 = 0;
             while sent < n {
                 let take = std::cmp::min(mtu_payload, n - sent);
                 let last = sent + take >= n;
                 let ttl2 = if cfg.ttl > 0 { cfg.ttl - 1 } else { 0 };
-                let frag = &out_buf[sent..sent+take];
-                if let Ok(bytes) = build_and_send_frag(&sock, &dst_mac, &cfg, 0, ttl2, msg_id, frag_idx, last, frag) {
+                let frag = &out_buf[sent..sent + take];
+                if let Ok(bytes) = build_and_send_frag(
+                    &sock, &dst_mac, &cfg, 0, ttl2, msg_id, frag_idx, last, frag,
+                ) {
                     tx_frag = tx_frag.saturating_add(1);
                     tx_bytes = tx_bytes.saturating_add(bytes as u64);
-                    if trace && first_tx { eprintln!("[l2bridge/trace] first TX: {} bytes", bytes); first_tx = false; }
+                    if trace && first_tx {
+                        eprintln!("[l2bridge/trace] first TX: {} bytes", bytes);
+                        first_tx = false;
+                    }
                 }
                 frag_idx = frag_idx.wrapping_add(1);
                 sent += take;
@@ -374,12 +509,21 @@ fn main() {
             Ok(nbytes) if nbytes >= 14 + size_of::<L2Hdr>() => {
                 // Check EtherType
                 let ethertype_be = u16::from_be_bytes([rx_buf[12], rx_buf[13]]);
-                if ethertype_be != cfg.ethertype { wrong_ethertype += 1; continue; }
+                if ethertype_be != cfg.ethertype {
+                    wrong_ethertype += 1;
+                    continue;
+                }
                 // Parse L2 header
                 let off = 14;
                 // Bounds for header fields
-                if nbytes < off + size_of::<L2Hdr>() { short_frame += 1; continue; }
-                let ver = rx_buf[off + 0]; if ver != VER { continue; }
+                if nbytes < off + size_of::<L2Hdr>() {
+                    short_frame += 1;
+                    continue;
+                }
+                let ver = rx_buf[off + 0];
+                if ver != VER {
+                    continue;
+                }
                 let chan = rx_buf[off + 1];
                 let flags = rx_buf[off + 2];
                 let rttl = rx_buf[off + 3];
@@ -389,22 +533,49 @@ fn main() {
                 let crc_rx = (rx_buf[off + 10] as u16) | ((rx_buf[off + 11] as u16) << 8);
                 let start = off + size_of::<L2Hdr>();
                 // Guard against overflow
-                let end = match start.checked_add(frag_len as usize) { Some(e) => e, None => { short_frame += 1; continue } };
-                if end > nbytes { short_frame += 1; continue; }
+                let end = match start.checked_add(frag_len as usize) {
+                    Some(e) => e,
+                    None => {
+                        short_frame += 1;
+                        continue;
+                    }
+                };
+                if end > nbytes {
+                    short_frame += 1;
+                    continue;
+                }
                 let pay = &rx_buf[start..end];
                 // CRC check
                 let mut hdr10 = [0u8; 10];
-                hdr10.copy_from_slice(&rx_buf[off..off+10]);
+                hdr10.copy_from_slice(&rx_buf[off..off + 10]);
                 let mut crc = crc16_ccitt(0xFFFF, &hdr10);
                 crc = crc16_ccitt(crc, pay);
-                if crc != crc_rx { crc_fail += 1; continue; }
+                if crc != crc_rx {
+                    crc_fail += 1;
+                    continue;
+                }
 
-                if trace && first_rx { eprintln!("[l2bridge/trace] first RX: {} bytes", nbytes); first_rx = false; }
+                if trace && first_rx {
+                    eprintln!("[l2bridge/trace] first RX: {} bytes", nbytes);
+                    first_rx = false;
+                }
                 if chan == 0 {
                     // Reassemble
-                    if reasm_id != msg_id || frag_idx == 0 { reasm_id = msg_id; reasm_len = 0; reasm_next_idx = 0; }
+                    if reasm_id != msg_id || frag_idx == 0 {
+                        reasm_id = msg_id;
+                        reasm_len = 0;
+                        reasm_next_idx = 0;
+                    }
                     if frag_idx == reasm_next_idx {
-                        let new_end = match reasm_len.checked_add(pay.len()) { Some(v) => v, None => { reasm_reset += 1; reasm_len = 0; reasm_next_idx = 0; continue } };
+                        let new_end = match reasm_len.checked_add(pay.len()) {
+                            Some(v) => v,
+                            None => {
+                                reasm_reset += 1;
+                                reasm_len = 0;
+                                reasm_next_idx = 0;
+                                continue;
+                            }
+                        };
                         if new_end <= reasm_buf.len() {
                             reasm_buf[reasm_len..new_end].copy_from_slice(pay);
                             reasm_len = new_end;
@@ -412,32 +583,64 @@ fn main() {
                         } else {
                             // overflow: reset this message
                             reasm_reset += 1;
-                            reasm_len = 0; reasm_next_idx = 0; continue;
+                            reasm_len = 0;
+                            reasm_next_idx = 0;
+                            continue;
                         }
                     }
                     // Detect last fragment via FLAG_LAST
                     if (flags & FLAG_LAST) != 0 {
-                        if reasm_len > 0 { let _ = prod.publish(&reasm_buf[..reasm_len]); }
+                        if reasm_len > 0 {
+                            let _ = prod.publish(&reasm_buf[..reasm_len]);
+                        }
                         // send ACK on chan 1 (echo payload back via same fragmentation)
                         let ack_ttl = if rttl > 0 { rttl - 1 } else { 0 };
                         if reasm_len == 0 {
                             // Edge case: zero-length payload; still send an ACK frame with LAST flag
-                            if let Ok(bytes) = build_and_send_frag(&sock, &dst_mac, &cfg, 1, ack_ttl, msg_id, 0, true, &[]) {
+                            if let Ok(bytes) = build_and_send_frag(
+                                &sock,
+                                &dst_mac,
+                                &cfg,
+                                1,
+                                ack_ttl,
+                                msg_id,
+                                0,
+                                true,
+                                &[],
+                            ) {
                                 tx_frag = tx_frag.saturating_add(1);
                                 tx_bytes = tx_bytes.saturating_add(bytes as u64);
-                                if trace && first_tx { eprintln!("[l2bridge/trace] first TX: {} bytes", bytes); first_tx = false; }
+                                if trace && first_tx {
+                                    eprintln!("[l2bridge/trace] first TX: {} bytes", bytes);
+                                    first_tx = false;
+                                }
                             }
                         } else {
-                            let mut sent = 0usize; let mut aidx: u16 = 0;
+                            let mut sent = 0usize;
+                            let mut aidx: u16 = 0;
                             while sent < reasm_len {
                                 let t = std::cmp::min(mtu_payload, reasm_len - sent);
                                 let last_ack = sent + t >= reasm_len;
-                                if let Ok(bytes) = build_and_send_frag(&sock, &dst_mac, &cfg, 1, ack_ttl, msg_id, aidx, last_ack, &reasm_buf[sent..sent+t]) {
+                                if let Ok(bytes) = build_and_send_frag(
+                                    &sock,
+                                    &dst_mac,
+                                    &cfg,
+                                    1,
+                                    ack_ttl,
+                                    msg_id,
+                                    aidx,
+                                    last_ack,
+                                    &reasm_buf[sent..sent + t],
+                                ) {
                                     tx_frag = tx_frag.saturating_add(1);
                                     tx_bytes = tx_bytes.saturating_add(bytes as u64);
-                                    if trace && first_tx { eprintln!("[l2bridge/trace] first TX: {} bytes", bytes); first_tx = false; }
+                                    if trace && first_tx {
+                                        eprintln!("[l2bridge/trace] first TX: {} bytes", bytes);
+                                        first_tx = false;
+                                    }
                                 }
-                                aidx = aidx.wrapping_add(1); sent += t;
+                                aidx = aidx.wrapping_add(1);
+                                sent += t;
                             }
                         }
                         reasm_len = 0;

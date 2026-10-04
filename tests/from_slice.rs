@@ -50,7 +50,9 @@ fn from_slice_fanout_and_backpressure() {
 
     // Fill the ring completely
     let payload = [0xAAu8; 8];
-    for _ in 0..desc { prod.publish(&payload).unwrap(); }
+    for _ in 0..desc {
+        prod.publish(&payload).unwrap();
+    }
 
     // Nonblocking publish should now observe backpressure
     match prod.try_publish(&payload) {

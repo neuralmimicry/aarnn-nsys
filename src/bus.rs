@@ -40,10 +40,7 @@ pub const fn min_buffer_size(desc_capacity: usize, slot_bytes: usize) -> usize {
 
 #[cfg(feature = "linux-shm")]
 use {
-    libc,
-    std::ffi::CString,
-    std::os::fd::FromRawFd,
-    std::os::fd::AsRawFd,
+    libc, std::ffi::CString, std::os::fd::AsRawFd, std::os::fd::FromRawFd,
     std::os::unix::io::OwnedFd,
 };
 
@@ -136,8 +133,12 @@ impl Header {
     }
 }
 
-const fn align_up(x: usize, a: usize) -> usize { (x + (a - 1)) & !(a - 1) }
-const fn is_pow2(x: usize) -> bool { x != 0 && (x & (x - 1)) == 0 }
+const fn align_up(x: usize, a: usize) -> usize {
+    (x + (a - 1)) & !(a - 1)
+}
+const fn is_pow2(x: usize) -> bool {
+    x != 0 && (x & (x - 1)) == 0
+}
 
 #[cfg(feature = "linux-shm")]
 pub struct Region {
@@ -153,11 +154,32 @@ impl Region {
         unsafe {
             let cname = CString::new(name).map_err(|_| BusError::InvalidArg)?;
             let fd = libc::shm_open(cname.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o600);
-            if fd < 0 { return Err(BusError::Platform(last_errno())); }
-            if libc::ftruncate(fd, total_len as i64) != 0 { let e = last_errno(); let _ = libc::close(fd); return Err(BusError::Platform(e)); }
-            let ptr = libc::mmap(core::ptr::null_mut(), total_len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0);
-            if ptr == libc::MAP_FAILED { let e = last_errno(); let _ = libc::close(fd); return Err(BusError::Platform(e)); }
-            Ok(Region { fd: OwnedFd::from_raw_fd(fd), ptr: NonNull::new_unchecked(ptr as *mut u8), len: total_len })
+            if fd < 0 {
+                return Err(BusError::Platform(last_errno()));
+            }
+            if libc::ftruncate(fd, total_len as i64) != 0 {
+                let e = last_errno();
+                let _ = libc::close(fd);
+                return Err(BusError::Platform(e));
+            }
+            let ptr = libc::mmap(
+                core::ptr::null_mut(),
+                total_len,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                fd,
+                0,
+            );
+            if ptr == libc::MAP_FAILED {
+                let e = last_errno();
+                let _ = libc::close(fd);
+                return Err(BusError::Platform(e));
+            }
+            Ok(Region {
+                fd: OwnedFd::from_raw_fd(fd),
+                ptr: NonNull::new_unchecked(ptr as *mut u8),
+                len: total_len,
+            })
         }
     }
 
@@ -165,14 +187,33 @@ impl Region {
         unsafe {
             let cname = CString::new(name).map_err(|_| BusError::InvalidArg)?;
             let fd = libc::shm_open(cname.as_ptr(), libc::O_RDWR, 0o600);
-            if fd < 0 { return Err(BusError::Platform(last_errno())); }
-            let ptr = libc::mmap(core::ptr::null_mut(), total_len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0);
-            if ptr == libc::MAP_FAILED { let e = last_errno(); let _ = libc::close(fd); return Err(BusError::Platform(e)); }
-            Ok(Region { fd: OwnedFd::from_raw_fd(fd), ptr: NonNull::new_unchecked(ptr as *mut u8), len: total_len })
+            if fd < 0 {
+                return Err(BusError::Platform(last_errno()));
+            }
+            let ptr = libc::mmap(
+                core::ptr::null_mut(),
+                total_len,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                fd,
+                0,
+            );
+            if ptr == libc::MAP_FAILED {
+                let e = last_errno();
+                let _ = libc::close(fd);
+                return Err(BusError::Platform(e));
+            }
+            Ok(Region {
+                fd: OwnedFd::from_raw_fd(fd),
+                ptr: NonNull::new_unchecked(ptr as *mut u8),
+                len: total_len,
+            })
         }
     }
 
-    fn as_mut_ptr(&self) -> *mut u8 { self.ptr.as_ptr() }
+    fn as_mut_ptr(&self) -> *mut u8 {
+        self.ptr.as_ptr()
+    }
 }
 
 #[cfg(feature = "linux-shm")]
@@ -202,10 +243,16 @@ pub struct Region {
 #[cfg(not(feature = "linux-shm"))]
 impl Region {
     pub fn from_slice(buf: &mut [u8]) -> Result<Self> {
-        if buf.is_empty() { return Err(BusError::InvalidArg); }
-        Ok(Self { ptr: NonNull::new(buf.as_mut_ptr()).unwrap() })
+        if buf.is_empty() {
+            return Err(BusError::InvalidArg);
+        }
+        Ok(Self {
+            ptr: NonNull::new(buf.as_mut_ptr()).unwrap(),
+        })
     }
-    fn as_mut_ptr(&self) -> *mut u8 { self.ptr.as_ptr() }
+    fn as_mut_ptr(&self) -> *mut u8 {
+        self.ptr.as_ptr()
+    }
 }
 
 pub struct BusHandle {
@@ -247,18 +294,29 @@ impl BusHandle {
 
     #[cfg(not(feature = "linux-shm"))]
     pub fn from_slice(buf: &mut [u8], desc_capacity: usize) -> Result<Self> {
-        if !is_pow2(desc_capacity) { return Err(BusError::InvalidArg); }
+        if !is_pow2(desc_capacity) {
+            return Err(BusError::InvalidArg);
+        }
         let header_bytes = Header::layout_size(desc_capacity);
-        if buf.len() <= header_bytes { return Err(BusError::InvalidArg); }
+        if buf.len() <= header_bytes {
+            return Err(BusError::InvalidArg);
+        }
         // Choose slot_bytes as evenly dividing remainder
         let slab_bytes = buf.len() - header_bytes;
-        if slab_bytes % desc_capacity != 0 { return Err(BusError::InvalidArg); }
+        if slab_bytes % desc_capacity != 0 {
+            return Err(BusError::InvalidArg);
+        }
         let slot_bytes = slab_bytes / desc_capacity;
         let region = Region::from_slice(buf)?;
         unsafe { Self::init_in_region(region, desc_capacity, slot_bytes, header_bytes) }
     }
 
-    unsafe fn init_in_region(region: Region, desc_capacity: usize, slot_bytes: usize, header_bytes: usize) -> Result<Self> {
+    unsafe fn init_in_region(
+        region: Region,
+        desc_capacity: usize,
+        slot_bytes: usize,
+        header_bytes: usize,
+    ) -> Result<Self> {
         let header = region.as_mut_ptr() as *mut Header;
         core::ptr::write_bytes(header as *mut u8, 0, size_of::<Header>());
         (*header).write_seq = AtomicU64::new(0);
@@ -274,11 +332,22 @@ impl BusHandle {
             (*s).desc = Descriptor { len: 0, _pad: 0 };
         }
         let payload_base = (region.as_mut_ptr() as usize + header_bytes) as *mut u8;
-        Ok(BusHandle { region, header, slots_base, payload_base, slot_bytes })
+        Ok(BusHandle {
+            region,
+            header,
+            slots_base,
+            payload_base,
+            slot_bytes,
+        })
     }
 
     #[cfg(feature = "linux-shm")]
-    unsafe fn map_in_region(region: Region, desc_capacity: usize, slot_bytes: usize, header_bytes: usize) -> Result<Self> {
+    unsafe fn map_in_region(
+        region: Region,
+        desc_capacity: usize,
+        slot_bytes: usize,
+        header_bytes: usize,
+    ) -> Result<Self> {
         let header = region.as_mut_ptr() as *mut Header;
         // Validate the on-disk/in-memory header matches requested sizes
         let hdr_desc = (*header).desc_capacity as usize;
@@ -289,34 +358,56 @@ impl BusHandle {
         }
         let slots_base = (region.as_mut_ptr() as usize + size_of::<Header>()) as *mut Slot;
         let payload_base = (region.as_mut_ptr() as usize + header_bytes) as *mut u8;
-        Ok(BusHandle { region, header, slots_base, payload_base, slot_bytes })
+        Ok(BusHandle {
+            region,
+            header,
+            slots_base,
+            payload_base,
+            slot_bytes,
+        })
     }
 
     pub fn subscribe(&self) -> Result<Subscriber<'_>> {
         unsafe {
             let n = (*self.header).n_subs.fetch_add(1, Ordering::AcqRel) as usize;
-            if n >= MAX_SUBSCRIBERS { return Err(BusError::NoSubscriberSlots); }
+            if n >= MAX_SUBSCRIBERS {
+                return Err(BusError::NoSubscriberSlots);
+            }
             // Initialize read_seq to current write_seq so new subscriber starts at latest
             let start = (*self.header).write_seq.load(Ordering::Acquire);
             (*self.header).sub_read_seq[n].store(start, Ordering::Release);
-            Ok(Subscriber { bus: self, sub_id: n as u32 })
+            Ok(Subscriber {
+                bus: self,
+                sub_id: n as u32,
+            })
         }
     }
 
-    pub fn producer(&self) -> Producer<'_> { Producer { bus: self } }
+    pub fn producer(&self) -> Producer<'_> {
+        Producer { bus: self }
+    }
 
-    #[inline] pub fn slot_bytes(&self) -> usize { self.slot_bytes }
-    #[inline] pub fn desc_capacity(&self) -> usize { (unsafe { (*self.header).desc_capacity }) as usize }
+    #[inline]
+    pub fn slot_bytes(&self) -> usize {
+        self.slot_bytes
+    }
+    #[inline]
+    pub fn desc_capacity(&self) -> usize {
+        (unsafe { (*self.header).desc_capacity }) as usize
+    }
 }
 
-pub struct Producer<'a> { bus: &'a BusHandle }
-
+pub struct Producer<'a> {
+    bus: &'a BusHandle,
+}
 
 impl<'a> Producer<'a> {
     /// Try to publish without blocking. Returns Ok(true) if published, Ok(false) if back-pressured.
     /// Errors: `MsgTooLarge` if payload doesn't fit the fixed per-slot size.
     pub fn try_publish(&self, payload: &[u8]) -> Result<bool> {
-        if payload.is_empty() || payload.len() > self.bus.slot_bytes { return Err(BusError::MsgTooLarge); }
+        if payload.is_empty() || payload.len() > self.bus.slot_bytes {
+            return Err(BusError::MsgTooLarge);
+        }
         unsafe {
             let h = &*self.bus.header;
             let cap = (*h).desc_capacity as u64;
@@ -327,11 +418,20 @@ impl<'a> Producer<'a> {
             let mut min_read = h.write_seq.load(Ordering::Acquire);
             for i in 0..n {
                 let rs = h.sub_read_seq[i].load(Ordering::Acquire);
-                if rs < min_read { min_read = rs; }
+                if rs < min_read {
+                    min_read = rs;
+                }
             }
-            if tail >= min_read + cap { return Ok(false); }
+            if tail >= min_read + cap {
+                return Ok(false);
+            }
             // Attempt to reserve exactly one slot
-            let claim = match h.claim_seq.compare_exchange_weak(tail, tail + 1, Ordering::AcqRel, Ordering::Acquire) {
+            let claim = match h.claim_seq.compare_exchange_weak(
+                tail,
+                tail + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
                 Ok(_) => tail,
                 Err(_) => return Ok(false),
             };
@@ -339,7 +439,10 @@ impl<'a> Producer<'a> {
             let slot = self.bus.slots_base.add(idx);
             let dst = self.bus.payload_base.add(idx * self.bus.slot_bytes);
             core::ptr::copy_nonoverlapping(payload.as_ptr(), dst, payload.len());
-            (*slot).desc = Descriptor { len: payload.len() as u32, _pad: 0 };
+            (*slot).desc = Descriptor {
+                len: payload.len() as u32,
+                _pad: 0,
+            };
             fence(Ordering::Release);
             (*slot).seq.store(claim + 1, Ordering::Release);
             // Attempt to advance contiguous write_seq (best-effort)
@@ -348,7 +451,13 @@ impl<'a> Producer<'a> {
                 let w_idx = (w & (cap - 1)) as usize;
                 let w_slot = self.bus.slots_base.add(w_idx);
                 let committed = (*w_slot).seq.load(Ordering::Acquire);
-                if committed == w + 1 { let _ = h.write_seq.compare_exchange(w, w + 1, Ordering::AcqRel, Ordering::Acquire); } else { break; }
+                if committed == w + 1 {
+                    let _ =
+                        h.write_seq
+                            .compare_exchange(w, w + 1, Ordering::AcqRel, Ordering::Acquire);
+                } else {
+                    break;
+                }
             }
             Ok(true)
         }
@@ -357,7 +466,9 @@ impl<'a> Producer<'a> {
     /// Publish a payload; blocks (spins/yields on std) on backpressure until the slot is available.
     /// Returns `MsgTooLarge` if `payload.len() > slot_bytes` or zero.
     pub fn publish(&self, payload: &[u8]) -> Result<()> {
-        if payload.is_empty() || payload.len() > self.bus.slot_bytes { return Err(BusError::MsgTooLarge); }
+        if payload.is_empty() || payload.len() > self.bus.slot_bytes {
+            return Err(BusError::MsgTooLarge);
+        }
         unsafe {
             let h = &*self.bus.header;
             let cap = (*h).desc_capacity as u64;
@@ -369,12 +480,18 @@ impl<'a> Producer<'a> {
                 let mut min_read = h.write_seq.load(Ordering::Acquire);
                 for i in 0..n {
                     let rs = h.sub_read_seq[i].load(Ordering::Acquire);
-                    if rs < min_read { min_read = rs; }
+                    if rs < min_read {
+                        min_read = rs;
+                    }
                 }
-                if claim < min_read + cap { break; }
+                if claim < min_read + cap {
+                    break;
+                }
                 // On std platforms we can yield; on bare we just spin
                 #[cfg(feature = "std")]
-                { std::thread::yield_now(); }
+                {
+                    std::thread::yield_now();
+                }
             }
 
             let idx = (claim & (cap - 1)) as usize;
@@ -382,7 +499,10 @@ impl<'a> Producer<'a> {
             let dst = self.bus.payload_base.add(idx * self.bus.slot_bytes);
             core::ptr::copy_nonoverlapping(payload.as_ptr(), dst, payload.len());
             // Set desc length
-            (*slot).desc = Descriptor { len: payload.len() as u32, _pad: 0 };
+            (*slot).desc = Descriptor {
+                len: payload.len() as u32,
+                _pad: 0,
+            };
             // Publish commit for this sequence
             fence(Ordering::Release);
             (*slot).seq.store(claim + 1, Ordering::Release);
@@ -393,7 +513,13 @@ impl<'a> Producer<'a> {
                 let w_idx = (w & (cap - 1)) as usize;
                 let w_slot = self.bus.slots_base.add(w_idx);
                 let committed = (*w_slot).seq.load(Ordering::Acquire);
-                if committed == w + 1 { let _ = h.write_seq.compare_exchange(w, w + 1, Ordering::AcqRel, Ordering::Acquire); } else { break; }
+                if committed == w + 1 {
+                    let _ =
+                        h.write_seq
+                            .compare_exchange(w, w + 1, Ordering::AcqRel, Ordering::Acquire);
+                } else {
+                    break;
+                }
             }
             Ok(())
         }
@@ -407,11 +533,17 @@ pub struct Subscriber<'a> {
 
 /// Relay one message from `src` to `dst` using `scratch` buffer.
 /// Returns Ok(Some(n)) if a message of length `n` was forwarded; Ok(None) if source had no message.
-pub fn relay_once<'a>(src: &Subscriber<'a>, dst: &Producer<'a>, scratch: &mut [u8]) -> Result<Option<usize>> {
+pub fn relay_once<'a>(
+    src: &Subscriber<'a>,
+    dst: &Producer<'a>,
+    scratch: &mut [u8],
+) -> Result<Option<usize>> {
     if let Some(n) = src.try_recv(scratch)? {
         // If destination cannot accept now, use blocking publish to preserve ordering
         // Truncate is not allowed; if message doesn't fit, drop and signal error
-        if n > dst.bus.slot_bytes() { return Err(BusError::MsgTooLarge); }
+        if n > dst.bus.slot_bytes() {
+            return Err(BusError::MsgTooLarge);
+        }
         dst.publish(&scratch[..n])?;
         return Ok(Some(n));
     }
@@ -428,9 +560,13 @@ impl<'a> Subscriber<'a> {
             let slot = self.bus.slots_base.add(idx);
             // Check if committed
             let committed = (*slot).seq.load(Ordering::Acquire);
-            if committed != seq + 1 { return Ok(None); }
+            if committed != seq + 1 {
+                return Ok(None);
+            }
             let len = (*slot).desc.len as usize;
-            if len > out.len() { return Err(BusError::MsgTooLarge); }
+            if len > out.len() {
+                return Err(BusError::MsgTooLarge);
+            }
             let src = self.bus.payload_base.add(idx * self.bus.slot_bytes);
             core::ptr::copy_nonoverlapping(src, out.as_mut_ptr(), len);
             // Advance reader sequence
@@ -444,8 +580,12 @@ impl<'a> Subscriber<'a> {
     pub fn recv_blocking(&self, out: &mut [u8], timeout: std::time::Duration) -> Result<usize> {
         let start = std::time::Instant::now();
         loop {
-            if let Some(n) = self.try_recv(out)? { return Ok(n); }
-            if start.elapsed() >= timeout { return Err(BusError::NotReady); }
+            if let Some(n) = self.try_recv(out)? {
+                return Ok(n);
+            }
+            if start.elapsed() >= timeout {
+                return Err(BusError::NotReady);
+            }
             std::thread::yield_now();
         }
     }

@@ -1,5 +1,5 @@
-use std::time::{Duration, Instant};
 use aarnn_nsys::bus::BusHandle;
+use std::time::{Duration, Instant};
 
 // Usage:
 // cargo run --example subscriber -- /demo 8192 33554432
@@ -23,7 +23,10 @@ fn main() {
         match sub.try_recv(&mut buf) {
             Ok(Some(_n)) => got += 1,
             Ok(None) => std::thread::yield_now(),
-            Err(e) => { eprintln!("recv error: {e}"); break; }
+            Err(e) => {
+                eprintln!("recv error: {e}");
+                break;
+            }
         }
     }
 
