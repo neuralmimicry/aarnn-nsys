@@ -1,6 +1,6 @@
 #![cfg(feature = "linux-shm")]
 // Integration test for the Linux shared memory backend (default features).
-use aarnn_nsys::bus::{BusHandle, BusError};
+use aarnn_nsys::bus::{BusError, BusHandle};
 
 #[test]
 fn shm_create_open_publish_recv() {
@@ -48,7 +48,9 @@ fn shm_oversize_and_backpressure() {
 
     // Fill the ring
     let payload = [0xABu8; 8];
-    for _ in 0..desc { prod.publish(&payload).unwrap(); }
+    for _ in 0..desc {
+        prod.publish(&payload).unwrap();
+    }
 
     // Now try_publish should report backpressure
     match prod.try_publish(&payload) {

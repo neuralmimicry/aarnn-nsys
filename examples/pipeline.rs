@@ -36,7 +36,12 @@ fn main() {
 
     let slot_src = src.slot_bytes();
     let slot_dst = dst.slot_bytes();
-    assert!(msg_size <= slot_src && msg_size <= slot_dst, "msg_size must fit both buses (src={}, dst={})", slot_src, slot_dst);
+    assert!(
+        msg_size <= slot_src && msg_size <= slot_dst,
+        "msg_size must fit both buses (src={}, dst={})",
+        slot_src,
+        slot_dst
+    );
 
     // Spawn producers writing to the source bus with unique IDs in first byte
     let mut prod_threads = Vec::with_capacity(producers);
@@ -55,8 +60,14 @@ fn main() {
                 // Favor throughput: use try then fallback to blocking
                 match prod.try_publish(&payload) {
                     Ok(true) => sent += 1,
-                    Ok(false) => { prod.publish(&payload).unwrap(); sent += 1; }
-                    Err(e) => { eprintln!("producer error: {e}"); break; }
+                    Ok(false) => {
+                        prod.publish(&payload).unwrap();
+                        sent += 1;
+                    }
+                    Err(e) => {
+                        eprintln!("producer error: {e}");
+                        break;
+                    }
                 }
             }
             (p as u8 + 1, sent)
@@ -73,12 +84,16 @@ fn main() {
         let start = Instant::now();
         let mut forwarded = 0u64;
         let mut dropped = 0u64;
-        while start.elapsed() < Duration::from_secs(seconds + 1) { // small tail to drain
+        while start.elapsed() < Duration::from_secs(seconds + 1) {
+            // small tail to drain
             match relay_once(&sub, &prod, &mut scratch) {
                 Ok(Some(_)) => forwarded += 1,
                 Ok(None) => thread::yield_now(),
                 Err(aarnn_nsys::bus::BusError::MsgTooLarge) => dropped += 1,
-                Err(e) => { eprintln!("relay error: {e}"); break; }
+                Err(e) => {
+                    eprintln!("relay error: {e}");
+                    break;
+                }
             }
         }
         (forwarded, dropped)
@@ -94,16 +109,24 @@ fn main() {
             Ok(Some(n)) => {
                 assert!(n >= 1);
                 let id = buf[0] as usize;
-                if id < counts.len() { counts[id] += 1; }
+                if id < counts.len() {
+                    counts[id] += 1;
+                }
             }
             Ok(None) => thread::yield_now(),
-            Err(e) => { eprintln!("dst recv error: {e}"); break; }
+            Err(e) => {
+                eprintln!("dst recv error: {e}");
+                break;
+            }
         }
     }
 
     let (fwd, drop_os) = relay_t.join().unwrap();
     let mut total_sent = 0u64;
-    for t in prod_threads { let (_id, s) = t.join().unwrap(); total_sent += s; }
+    for t in prod_threads {
+        let (_id, s) = t.join().unwrap();
+        total_sent += s;
+    }
     let total_recv: u64 = counts.iter().sum();
 
     println!("pipeline summary:\n  producers={} msg_size={}B seconds={}\n  total_sent={} forwarded={} dropped_oversize={} total_recv={}"
